@@ -26,6 +26,7 @@ WORKDIR /app
 
 COPY --from=builder /app/main .
 COPY .env /app/.env
+COPY radios.json /app/radios.json
 
 EXPOSE 8080
 
