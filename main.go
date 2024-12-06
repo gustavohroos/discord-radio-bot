@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,19 +23,17 @@ import (
 )
 
 const (
-	channels  int = 2                   // Number of audio channels
-	frameRate int = 48000               // Audio sampling rate
-	frameSize int = 960                 // Audio frame size
-	maxBytes  int = (frameSize * 2) * 2 // Max size of opus data
+	channels  int = 2
+	frameRate int = 48000
+	frameSize int = 960
+	maxBytes  int = (frameSize * 2) * 2
 )
 
-// RadioStation represents a radio station with a name and URL
 type RadioStation struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 }
 
-// Connection represents a Discord voice connection with streaming state
 type Connection struct {
 	vc        *discordgo.VoiceConnection
 	stop      chan struct{}
@@ -52,11 +49,7 @@ var (
 	connections = make(map[string]*Connection)
 	mutex       sync.Mutex
 
-	streamURLs = map[string]string{
-		"gaucha":    "https://liverdgaupoa.rbsdirect.com.br/primary/gaucha_rbs.sdp/playlist.m3u8",
-		"atlantida": "https://liverdatlpoa.rbsdirect.com.br/primary/atl_poa.sdp/playlist.m3u8",
-		"gay":       "https://0n-gay.radionetz.de/0n-gay.mp3",
-	}
+	streamURLs = map[string]string{}
 
 	customRadios      = make(map[string]string)
 	customRadiosMutex sync.RWMutex
@@ -72,39 +65,32 @@ func main() {
 	}
 	log.SetLevel(log.Level(settings.LogLevel))
 
-	// Create a new Discord session
 	dg, err := discordgo.New("Bot " + settings.DiscordToken)
 	if err != nil {
 		log.Fatal("Error creating Discord session: ", err)
 	}
 	log.Debug("Discord session created")
 
-	// Register the message create handler
 	dg.AddHandler(onMessageCreate)
 
-	// Open the Discord session
 	err = dg.Open()
 	if err != nil {
 		log.Fatal("Error opening connection to Discord: ", err)
 	}
 	defer dg.Close()
 
-	// Load custom radios from file
 	loadCustomRadios()
 
 	log.Println("Bot is running. Press CTRL+C to exit.")
 	select {}
 }
 
-// onMessageCreate handles incoming messages and commands
 func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
-	// Ignore messages from the bot itself
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
 
-	// Handle the !help command
 	if m.Content == "!help" {
 		helpMessage := "**Available Commands:**\n" +
 			"- `!playradio <radio_name>`: Play a predefined or custom radio station.\n" +
@@ -120,7 +106,6 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// Handle the !playradio command
 	if strings.HasPrefix(m.Content, "!playradio") {
 		args := strings.Fields(m.Content)
 		if len(args) < 2 {
@@ -141,10 +126,9 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 			}
 		}
 
-		// Use playRadioStream function
 		playRadioStream(s, m, streamURL, radioName)
 	} else if m.Content == "!stop" {
-		// Handle the !stop command
+
 		mutex.Lock()
 		conn, ok := connections[m.GuildID]
 		if !ok || !conn.streaming {
@@ -160,19 +144,19 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		s.ChannelMessageSend(m.ChannelID, "Stopped playing.")
 	} else if m.Content == "!listradios" {
-		// Handle the !listradios command
+
 		radios := make([]string, 0, len(streamURLs))
 		for name := range streamURLs {
 			radios = append(radios, name)
 		}
 		customRadiosMutex.RLock()
 		for name := range customRadios {
-			radios = append(radios, name+" (custom)")
+			radios = append(radios, name)
 		}
 		customRadiosMutex.RUnlock()
 		s.ChannelMessageSend(m.ChannelID, "Available radios: "+strings.Join(radios, ", "))
 	} else if strings.HasPrefix(m.Content, "!volume") {
-		// Handle the !volume command
+
 		args := strings.Fields(m.Content)
 		if len(args) < 2 {
 			s.ChannelMessageSend(m.ChannelID, "Please specify a volume level between 0 and 100.")
@@ -200,7 +184,6 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Volume set to %d%%.", volumeValue))
 	} else if strings.HasPrefix(m.Content, "!searchradio") {
-		// Handle the !searchradio command
 		args := strings.Fields(m.Content)
 		if len(args) < 2 {
 			s.ChannelMessageSend(m.ChannelID, "Please provide keywords to search for radio stations.")
@@ -220,11 +203,10 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 			return
 		}
 
-		// Display the search results
 		response := "Found the following stations:\n"
 		for i, station := range stations {
 			response += fmt.Sprintf("%d. %s\n", i+1, station.Name)
-			if i >= 9 { // Limit to 10 results
+			if i >= 9 {
 				break
 			}
 		}
@@ -232,12 +214,10 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		s.ChannelMessageSend(m.ChannelID, response)
 
-		// Store the search results
 		searchResultsMutex.Lock()
 		searchResults[m.Author.ID] = stations
 		searchResultsMutex.Unlock()
 	} else if strings.HasPrefix(m.Content, "!playstation") {
-		// Handle the !playstation command
 		args := strings.Fields(m.Content)
 		if len(args) < 2 {
 			s.ChannelMessageSend(m.ChannelID, "Please specify the number of the station to play.")
@@ -266,10 +246,9 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		station := stations[index-1]
 		streamURL := station.URL
 
-		// Use the playRadioStream function to play the selected station
 		playRadioStream(s, m, streamURL, station.Name)
 	} else if strings.HasPrefix(m.Content, "!addradio") {
-		// Handle the !addradio command
+
 		args := strings.Fields(m.Content)
 		if len(args) < 3 {
 			s.ChannelMessageSend(m.ChannelID, "Usage: `!addradio <stream_url> <radio_name>`")
@@ -279,7 +258,6 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		streamURL := args[1]
 		radioName := strings.ToLower(args[2])
 
-		// Validate the stream URL
 		if !isValidURL(streamURL) {
 			s.ChannelMessageSend(m.ChannelID, "Invalid stream URL.")
 			return
@@ -289,7 +267,6 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		customRadios[radioName] = streamURL
 		customRadiosMutex.Unlock()
 
-		// Save custom radios to file
 		saveCustomRadios()
 
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Custom radio `%s` added.", radioName))
@@ -298,7 +275,6 @@ func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 }
 
-// playRadioStream starts playing a radio stream
 func playRadioStream(s *discordgo.Session, m *discordgo.MessageCreate, streamURL, radioName string) {
 	voiceChannelID := getUserVoiceChannelID(s, m.GuildID, m.Author.ID)
 	if voiceChannelID == "" {
@@ -307,7 +283,7 @@ func playRadioStream(s *discordgo.Session, m *discordgo.MessageCreate, streamURL
 	}
 
 	mutex.Lock()
-	// If there's an existing connection, stop it first
+
 	if conn, ok := connections[m.GuildID]; ok {
 		close(conn.stop)
 		<-conn.done
@@ -329,7 +305,7 @@ func playRadioStream(s *discordgo.Session, m *discordgo.MessageCreate, streamURL
 		stop:      stop,
 		done:      done,
 		streaming: true,
-		volume:    1.0, // Default volume is 100%
+		volume:    1.0,
 	}
 	connections[m.GuildID] = conn
 	mutex.Unlock()
@@ -339,7 +315,6 @@ func playRadioStream(s *discordgo.Session, m *discordgo.MessageCreate, streamURL
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Now playing radio: %s", radioName))
 }
 
-// getUserVoiceChannelID returns the voice channel ID of the user
 func getUserVoiceChannelID(s *discordgo.Session, guildID, userID string) string {
 
 	guild, err := s.State.Guild(guildID)
@@ -361,7 +336,6 @@ func getUserVoiceChannelID(s *discordgo.Session, guildID, userID string) string 
 	return ""
 }
 
-// streamAudio handles streaming audio to the voice connection
 func streamAudio(s *discordgo.Session, conn *Connection, streamURL string) {
 	defer close(conn.done)
 	defer conn.vc.Disconnect()
@@ -370,7 +344,6 @@ func streamAudio(s *discordgo.Session, conn *Connection, streamURL string) {
 
 	log.Println("Starting audio stream...")
 
-	// Set up ffmpeg command
 	ffmpeg := exec.Command(
 		"ffmpeg",
 		"-i", streamURL,
@@ -379,7 +352,7 @@ func streamAudio(s *discordgo.Session, conn *Connection, streamURL string) {
 		"-ac", fmt.Sprint(channels),
 		"pipe:1",
 	)
-	ffmpeg.Stderr = os.Stderr // Capture stderr for logging
+	ffmpeg.Stderr = os.Stderr
 
 	ffmpegOut, err := ffmpeg.StdoutPipe()
 	if err != nil {
@@ -433,7 +406,6 @@ func streamAudio(s *discordgo.Session, conn *Connection, streamURL string) {
 					return
 				}
 
-				// Apply volume
 				conn.volumeMu.RLock()
 				volume := conn.volume
 				conn.volumeMu.RUnlock()
@@ -474,12 +446,10 @@ func streamAudio(s *discordgo.Session, conn *Connection, streamURL string) {
 		log.Println("Stream stopped due to error:", err)
 	}
 
-	// Ensure ffmpeg process is terminated
 	ffmpeg.Process.Kill()
 	ffmpeg.Wait()
 }
 
-// searchRadioStations searches for radio stations using the Radio Browser API
 func searchRadioStations(query string) ([]RadioStation, error) {
 	apiURL := "https://de1.api.radio-browser.info/json/stations/search"
 	params := url.Values{}
@@ -512,13 +482,11 @@ func searchRadioStations(query string) ([]RadioStation, error) {
 	return result, nil
 }
 
-// isValidURL validates the provided URL
 func isValidURL(u string) bool {
 	_, err := url.ParseRequestURI(u)
 	return err == nil
 }
 
-// saveCustomRadios saves custom radios to a file
 func saveCustomRadios() {
 	customRadiosMutex.RLock()
 	defer customRadiosMutex.RUnlock()
@@ -529,15 +497,14 @@ func saveCustomRadios() {
 		return
 	}
 
-	err = ioutil.WriteFile("custom_radios.json", data, 0644)
+	err = os.WriteFile("radios.json", data, 0644)
 	if err != nil {
 		log.Println("Error writing custom radios to file:", err)
 	}
 }
 
-// loadCustomRadios loads custom radios from a file
 func loadCustomRadios() {
-	data, err := ioutil.ReadFile("custom_radios.json")
+	data, err := os.ReadFile("radios.json")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return

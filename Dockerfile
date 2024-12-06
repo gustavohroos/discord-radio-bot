@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23.3-bullseye AS builder
+FROM golang:1.23.3 AS builder
 
 # Install necessary packages, including opus and FFmpeg libraries
 RUN apt-get update && apt-get install -y \
@@ -10,19 +10,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy and download dependencies
-COPY go.mod .
-COPY go.sum .
-RUN go mod download
-
 # Copy source code
 COPY . .
 
-# Build the application
+RUN go mod tidy
+
 RUN go build -o main .
 
 # Final stage
-FROM debian:bullseye-slim
+FROM ubuntu:22.04
 
 # Install runtime dependencies, including CA certificates
 RUN apt-get update && apt-get install -y \
